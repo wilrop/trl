@@ -535,9 +535,10 @@ class DPOTrainer(Trainer):
         dataset_name: str,
     ) -> Union[Dataset, IterableDataset]:
         # Build the kwargs for the `map` function
-        map_kwargs = {"writer_batch_size": 10}
+        map_kwargs = {}
         if isinstance(dataset, Dataset):  # IterableDataset does not support num_proc
             map_kwargs["num_proc"] = args.dataset_num_proc
+            map_kwargs["writer_batch_size"] = 10
 
         with PartialState().main_process_first():
             # Extract prompt if needed
