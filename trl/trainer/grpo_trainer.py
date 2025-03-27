@@ -285,6 +285,7 @@ class GRPOTrainer(Trainer):
         callbacks: Optional[list[TrainerCallback]] = None,
         optimizers: tuple[Optional[torch.optim.Optimizer], Optional[torch.optim.lr_scheduler.LambdaLR]] = (None, None),
         peft_config: Optional["PeftConfig"] = None,
+        vllm_client: Optional["VLLMClient"] = None,
     ):
         # Args
         if args is None:
@@ -473,9 +474,12 @@ class GRPOTrainer(Trainer):
                 )
 
             if self.accelerator.is_main_process:
-                self.vllm_client = VLLMClient(
-                    args.vllm_server_host, args.vllm_server_port, connection_timeout=args.vllm_server_timeout
-                )
+                if vllm_client is not None:
+                    self.vllm_client = vllm_client
+                else:
+                    self.vllm_client = VLLMClient(
+                        args.vllm_server_host, args.vllm_server_port, connection_timeout=args.vllm_server_timeout
+                    )
 
             # vLLM specific sampling arguments
             self.guided_decoding_regex = args.vllm_guided_decoding_regex
