@@ -428,6 +428,7 @@ class GRPOTrainer(Trainer):
         self._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
         self._total_train_tokens = 0
         self.log_completions = args.log_completions
+        self.num_completions_to_print = args.num_completions_to_print
 
         super().__init__(
             model=model,
@@ -662,11 +663,14 @@ class GRPOTrainer(Trainer):
     def _prepare_inputs(self, inputs: dict[str, Union[torch.Tensor, Any]]) -> dict[str, Union[torch.Tensor, Any]]:
         mode = "eval" if self.control.should_evaluate else "train"
         if mode == "train":
-            if self.state.global_step % self.num_iterations == 0:
+            buffer_index = self._step % self.args.gradient_accumulation_steps
+            buffered_inputs = self._buffered_inputs[buffer_index]
+            if self.state.global_step % self.num_iterations == 0 or buffered_inputs is None:
+                # buffered_inputs=None can occur when resuming from a checkpoint
                 inputs = self._generate_and_score_completions(inputs)
-                self._buffered_inputs[self._step % self.args.gradient_accumulation_steps] = inputs
+                self._buffered_inputs[buffer_index] = inputs
             else:
-                inputs = self._buffered_inputs[self._step % self.args.gradient_accumulation_steps]
+                inputs = buffered_inputs
             self._step += 1
         else:
             # In evaluation, we don't reuse completions across multiple updates, so we don't need to buffer inputs.
@@ -867,13 +871,17 @@ class GRPOTrainer(Trainer):
         completion_length = self.accelerator.gather_for_metrics(completion_mask.sum(1)).float().mean().item()
         self._metrics[mode]["completion_length"].append(completion_length)
 
-        # Calculate mean reward per function, but only for samples where the function was applied
-        for i, reward_func in enumerate(self.reward_funcs):
+        # Get the names of the reward functions
+        reward_func_names = []
+        for reward_func in self.reward_funcs:
             if isinstance(reward_func, nn.Module):  # Module instead of PretrainedModel for compat with compiled models
                 reward_func_name = reward_func.config._name_or_path.split("/")[-1]
             else:
                 reward_func_name = reward_func.__name__
-            # Only calculate mean for samples where this reward function was applied (non-NaN values)
+            reward_func_names.append(reward_func_name)
+
+        # Calculate mean reward per function, but only for samples where the function was applied (non-NaN values)
+        for i, reward_func_name in enumerate(reward_func_names):
             mean_rewards = torch.nanmean(rewards_per_func[:, i]).item()
             self._metrics[mode][f"rewards/{reward_func_name}/mean"].append(mean_rewards)
             std_rewards = nanstd(rewards_per_func[:, i]).item()
@@ -884,7 +892,9 @@ class GRPOTrainer(Trainer):
         if self.log_completions and self.state.global_step % self.args.logging_steps == 0:
             prompts_to_log = gather_object(prompts_text)
             completions_to_log = gather_object(completions_text)
-            rewards_to_log = rewards.tolist()
+            rewards_to_log = {
+                reward_func_name: rewards_per_func[:, i] for i, reward_func_name in enumerate(reward_func_names)
+            }
 
             if self.accelerator.is_main_process:
                 if is_rich_available():
@@ -893,6 +903,7 @@ class GRPOTrainer(Trainer):
                         completions_to_log,
                         rewards_to_log,
                         self.state.global_step,
+                        self.num_completions_to_print,
                     )
                 if self.args.report_to and "wandb" in self.args.report_to and wandb.run is not None:
                     import pandas as pd
@@ -959,7 +970,10 @@ class GRPOTrainer(Trainer):
             mean_kl = (per_token_kl * completion_mask).sum() / completion_mask.sum()
             self._metrics[mode]["kl"].append(self.accelerator.gather_for_metrics(mean_kl).mean().item())
 
-        is_clipped = (coef_1 < (1 - self.epsilon_low)) | (coef_1 > (1 + self.epsilon_high))
+        # Compute the clip ratio
+        is_clipped = ((coef_1 < 1 - self.epsilon_low) & (advantages.unsqueeze(1) < 0)) | (
+            (coef_1 > 1 + self.epsilon_high) & (advantages.unsqueeze(1) > 0)
+        )
         clip_ratio = (is_clipped * completion_mask).sum() / completion_mask.sum()
         self._metrics[mode]["clip_ratio"].append(self.accelerator.gather_for_metrics(clip_ratio).mean().item())
         return loss
