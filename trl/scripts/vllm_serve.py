@@ -345,6 +345,50 @@ def main(script_args: ScriptArguments):
         completion_ids = [list(output.token_ids) for outputs in all_outputs for output in outputs.outputs]
         return {"completion_ids": completion_ids}
 
+    @app.post("/generate_raw/")
+    async def generate_raw(request: GenerateRequest):
+        """
+        Generates raw completions for the provided prompts. Does not do the extra extraction.
+
+        Args:
+            request (`GenerateRequest`):
+                - `prompts` (list of `str`): A list of prompts (text strings) for the model to generate completions.
+
+        Returns:
+            `GenerateResponse`:
+                - `completion_ids` (list of list of `int`): A list of lists of token IDs for each generated completion.
+
+        Example request:
+        ```json
+        {"prompts": ["Hello world", "What is AI?"]}
+        ```
+
+        Example response:
+        ```json
+        {"completion_ids": [[101, 102, 103], [201, 202, 203]]}
+        ```
+        """
+
+        # Guided decoding, if enabled
+        if request.guided_decoding_regex is not None:
+            guided_decoding = GuidedDecodingParams(backend="outlines", regex=request.guided_decoding_regex)
+        else:
+            guided_decoding = None
+
+        # Sampling parameters
+        sampling_params = SamplingParams(
+            n=request.n,
+            repetition_penalty=request.repetition_penalty,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
+            min_p=request.min_p,
+            max_tokens=request.max_tokens,
+            guided_decoding=guided_decoding,
+        )
+        all_outputs = llm.generate(request.prompts, sampling_params=sampling_params)
+        return all_outputs
+
     class InitCommunicatorRequest(BaseModel):
         host: str
         port: int
