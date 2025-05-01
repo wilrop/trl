@@ -23,6 +23,7 @@ import torch
 
 from trl import TrlParser
 from trl.import_utils import is_fastapi_available, is_pydantic_available, is_uvicorn_available, is_vllm_available
+from trl.custom_stateless_process_group import CustomStatelessProcessGroup
 
 
 if is_fastapi_available():
@@ -41,7 +42,6 @@ if is_vllm_available():
     from vllm import LLM, SamplingParams
     from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
     from vllm.distributed.parallel_state import get_world_group
-    from vllm.distributed.utils import StatelessProcessGroup
     from vllm.sampling_params import GuidedDecodingParams
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class WeightSyncWorkerExtension:
         rank = get_world_group().rank
 
         # Create a stateless process group to manage communication between training processes and vLLM workers.
-        pg = StatelessProcessGroup.create(host=host, port=port, rank=rank, world_size=world_size)
+        pg = CustomStatelessProcessGroup.create(host=host, port=port, rank=rank, world_size=world_size)
 
         # Initialize the NCCL-based communicator for weight synchronization.
         self.pynccl_comm = PyNcclCommunicator(pg, device=self.device)

@@ -21,6 +21,7 @@ import torch
 from torch import nn
 
 from ..import_utils import is_requests_available, is_vllm_available
+from trl.custom_stateless_process_group import CustomStatelessProcessGroup
 
 
 if is_requests_available():
@@ -30,7 +31,6 @@ if is_requests_available():
 
 if is_vllm_available():
     from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
-    from vllm.distributed.utils import StatelessProcessGroup
 
 
 logger = logging.getLogger(__name__)
@@ -270,7 +270,7 @@ class VLLMClient:
             raise Exception(f"Request failed: {response.status_code}, {response.text}")
 
         # Set up the communication group for weight broadcasting
-        pg = StatelessProcessGroup.create(host=self.host, port=self.group_port, rank=self.rank, world_size=world_size)
+        pg = CustomStatelessProcessGroup.create(host=self.host, port=self.group_port, rank=self.rank, world_size=world_size)
         self.pynccl_comm = PyNcclCommunicator(pg, device="cuda:0")
 
     def update_named_param(self, name: str, weights: torch.Tensor):
